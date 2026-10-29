@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Efficio Apex - debug view</title>
+<style>
+ body{font-family:system-ui,sans-serif;background:#12181a;color:#e6efec;margin:0;padding:14px}
+ .badge{display:inline-block;padding:3px 10px;border-radius:12px;font-weight:600;margin-right:6px}
+ .b-LIVE{background:#1c7a5a}.b-SIMULATED{background:#8a6d1c}.b-REPLAY{background:#3b5ea8}.b-STALE{background:#a83b3b}
+ table{border-collapse:collapse;margin:10px 0}td,th{border:1px solid #2c3a3d;padding:4px 10px;text-align:right}th{background:#1d2a2c}
+ td:first-child,th:first-child{text-align:left} pre{background:#0c1112;padding:8px;overflow:auto;max-height:240px}
+</style>
+<h3>Efficio Apex - backend debug view (placeholder UI)</h3>
+<div><span id="mode" class="badge">-</span><span id="state" class="badge" style="background:#2c3a3d">-</span>
+ fan: <b id="fan">-</b> &nbsp; ML: <b id="ml">-</b> &nbsp; age: <b id="age">-</b></div>
+<table><thead><tr><th>sensor</th><th>value</th><th>baseline</th><th>rise</th><th>health</th></tr></thead><tbody id="rows"></tbody></table>
+<div>timers: <span id="timers">-</span></div>
+<h4>Events</h4><pre id="events"></pre>
+<script>
+const $=id=>document.getElementById(id), f=x=>x==null?'-':(+x).toFixed(2);
+function draw(m){
+  const r=m.row; if(!r){$('mode').textContent='NO DATA';return}
+  const b=$('mode'); b.textContent=m.stale?'STALE':r.mode; b.className='badge b-'+(m.stale?'STALE':r.mode);
+  $('state').textContent=r.state; $('fan').textContent=r.fan_on?'ON':'off';
+  $('ml').textContent=r.ml.label+' ('+f(r.ml.confidence)+') ['+r.ml.source+']'; $('age').textContent=m.age_s+' s';
+  const tb=$('rows'); tb.textContent='';
+  for(const k of Object.keys(r.sensors)){const tr=tb.insertRow();
+    [k,f(r.sensors[k]),f((r.baseline||{})[k]),f((r.deltas||{})[k]),(r.health||{})[k]].forEach(v=>tr.insertCell().textContent=v)}
+  $('timers').textContent=JSON.stringify(r.timers)+(r.demo_timers?'  (shortened demo timers)':'');
+}
+const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/live');
+ws.onmessage=e=>draw(JSON.parse(e.data));
+async function ev(){const j=await (await fetch('/api/events?limit=15')).json();
+ $('events').textContent=j.map(e=>new Date(e.ts*1000).toLocaleTimeString()+'  ['+e.level+'] '+e.msg).join('\n')}
+ev(); setInterval(ev,3000);
+</script>

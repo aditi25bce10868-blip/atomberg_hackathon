@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pyyaml
+pyserial        # only needed for source: serial (ESP32 over USB)
+pytest
+httpx           # for tests
+# scikit-learn, pandas, numpy, joblib   <- install when the ML model is plugged in

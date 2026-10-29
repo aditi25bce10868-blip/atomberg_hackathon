@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1214">
+  <title>Efficio Apex</title>
+  <link rel="icon" href="data:,">
+  <!-- everything is vendored: no internet needed -->
+  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/vendor/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ============ sidebar (desktop) / bottom tab bar (phone) ============ -->
+<aside class="sidebar">
+  <div class="brand"><i class="bi bi-fan"></i><div>Efficio Apex<small>smart exhaust fan</small></div></div>
+  <nav class="tabs" aria-label="Sections">
+    <a class="tab-link" href="#live"       data-tab="live">      <i class="bi bi-activity"></i>        <span class="lbl-long">Live</span>          <span class="lbl-short">Live</span></a>
+    <a class="tab-link" href="#classifier" data-tab="classifier"><i class="bi bi-cpu"></i>            <span class="lbl-long">Classifier</span>    <span class="lbl-short">Class</span></a>
+    <a class="tab-link" href="#sensors"    data-tab="sensors">   <i class="bi bi-thermometer-half"></i><span class="lbl-long">Sensors</span>       <span class="lbl-short">Sensors</span></a>
+    <a class="tab-link" href="#runs"       data-tab="runs">      <i class="bi bi-clock-history"></i>   <span class="lbl-long">Runs and logs</span> <span class="lbl-short">Runs</span></a>
+    <a class="tab-link" href="#ml"         data-tab="ml">        <i class="bi bi-bar-chart-line"></i>  <span class="lbl-long">ML report</span>     <span class="lbl-short">ML</span></a>
+    <a class="tab-link" href="#collect"    data-tab="collect">   <i class="bi bi-record-circle"></i>  <span class="lbl-long">Collect</span>       <span class="lbl-short">Collect</span></a>
+    <a class="tab-link" href="#system"     data-tab="system">    <i class="bi bi-gear"></i>            <span class="lbl-long">System</span>        <span class="lbl-short">System</span></a>
+  </nav>
+  <div class="side-foot">Read-only view. The fan can only be switched by the control process or the wall switch.</div>
+</aside>
+
+<div class="main">
+
+  <!-- ============ top bar: mode badge, state, fan ============ -->
+  <header class="topbar">
+    <div class="top-title"><i class="bi bi-fan"></i><span>Efficio Apex</span></div>
+    <div class="top-right d-flex align-items-center gap-2 flex-wrap">
+      <span id="demoChip" class="chip chip-warn d-none" title="Shortened timers are active (demo_timers: true)"><i class="bi bi-stopwatch"></i>demo timers</span>
+      <span id="link" class="link wait"><i class="dot"></i><span id="linkText">connecting</span></span>
+    </div>
+    <div class="top-items">
+      <span id="modeBadge" class="mode-badge"><i class="dot"></i><span id="modeText">NO DATA</span></span>
+      <span id="staleChip" class="chip chip-bad d-none"><i class="bi bi-exclamation-triangle"></i>STALE</span>
+      <span id="statePill" class="state-pill"><span id="stateText">—</span></span>
+      <span id="fanPill" class="fan-pill"><i class="bi bi-fan"></i><span id="fanText">FAN —</span></span>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <!-- ================= LIVE ================= -->
+    <section class="pane" id="pane-live">
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-4">
+          <div class="panel" id="heroState">
+            <h2 class="panel-title"><span><i class="bi bi-diagram-3"></i>State</span><span id="heroAge" class="num"></span></h2>
+            <div class="state-big" id="heroStateText">—</div>
+            <div class="state-sub" id="heroStateSub">Waiting for data…</div>
+            <div class="chips" id="heroChips"></div>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-lg-4">
+          <div class="panel">
+            <h2 class="panel-title"><span><i class="bi bi-stopwatch"></i>Timers</span><span id="timersNote" class="chip d-none">demo</span></h2>
+            <div id="timers"></div>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-lg-4">
+          <div class="panel">
+            <h2 class="panel-title"><span><i class="bi bi-cpu"></i>Classifier</span><a href="#classifier" class="small">details</a></h2>
+            <div class="d-flex align-items-baseline gap-3 mb-2">
+              <span class="label-big" id="miniLabel" style="font-size:1.8rem">—</span>
+              <span class="num muted" id="miniConf"></span>
+            </div>
+            <div class="probs compact" id="miniProbs"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3" id="statCards"></div>
+
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <h2 class="panel-title m-0">Sensors vs baseline
+          <span class="legend-note ms-2 d-none d-sm-inline">
+            <span class="swatch" style="background:var(--muted)"></span>baseline
+            <span class="swatch" style="background:var(--running)"></span>fan running
+            <span class="swatch" style="background:var(--runon)"></span>run-on
+          </span>
+        </h2>
+        <div class="seg" id="windowSeg" role="group" aria-label="Chart window">
+          <button type="button" data-w="120">2 min</button>
+          <button type="button" data-w="300" class="active">5 min</button>
+          <button type="button" data-w="600">10 min</button>
+        </div>
+      </div>
+      <div class="row g-3 mb-3" id="chartCards"></div>
+
+      <div class="panel">
+        <h2 class="panel-title"><span><i class="bi bi-journal-text"></i>Event log</span><a href="#runs" class="small">all events</a></h2>
+        <ul class="log" id="liveLog"></ul>
+      </div>
+    </section>
+
+    <!-- ================= CLASSIFIER ================= -->
+    <section class="pane" id="pane-classifier">
+      <h1 class="pane-title">Classifier <span class="sub" id="clfSource"></span></h1>
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-5">
+          <div class="panel">
+            <h2 class="panel-title"><span>Prediction</span><span id="clfNote"></span></h2>
+            <div class="d-flex align-items-baseline gap-3 flex-wrap mb-3">
+              <span class="label-big" id="clfLabel">—</span>
+              <span class="conf-big num" id="clfConf"></span>
+            </div>
+            <div class="probs" id="clfProbs"></div>
+            <div class="mt-3 muted small" id="clfTruth"></div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-7">
+          <div class="panel">
+            <h2 class="panel-title"><span>Probability over time</span><span class="legend-note">same window as Live</span></h2>
+            <div class="chart-box tall"><canvas id="probChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SENSORS ================= -->
+    <section class="pane" id="pane-sensors">
+      <h1 class="pane-title">Sensors <span class="sub">value, learned baseline and how close each is to triggering the fan</span></h1>
+      <div class="panel">
+        <div class="table-scroll">
+          <table class="table" id="sensorTable">
+            <thead><tr><th>Sensor</th><th class="num">Value</th><th class="num">Baseline</th><th class="num">Rise</th><th class="num">Trigger at</th><th>Progress to trigger</th><th>Health</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted small mt-3 mb-0">A rise counts as a trigger when it reaches its threshold. Detected people (PIR) or a confident non-clean prediction make the thresholds a little lower. A failed critical sensor (MQ-135, MQ-2, humidity, temperature) switches automation off.</p>
+      </div>
+    </section>
+
+    <!-- ================= RUNS AND LOGS ================= -->
+    <section class="pane" id="pane-runs">
+      <h1 class="pane-title">Runs and logs</h1>
+      <div class="row g-3 mb-3" id="runSummary"></div>
+      <div class="panel mb-3">
+        <h2 class="panel-title"><span><i class="bi bi-clock-history"></i>Fan runs</span><span class="muted" id="runCount"></span></h2>
+        <div class="table-scroll">
+          <table class="table" id="runTable">
+            <thead><tr><th>Started</th><th>Cause</th><th class="num">Trigger → fan</th><th class="num">Duration</th><th class="num">Run-on</th><th>Ended by</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">
+          <span><i class="bi bi-journal-text"></i>Events</span>
+          <select id="evFilter" class="form-select form-select-sm w-auto">
+            <option value="">All levels</option><option value="info">Info</option><option value="warn">Warnings</option><option value="error">Errors</option>
+          </select>
+        </h2>
+        <ul class="log" id="fullLog" style="max-height:480px"></ul>
+      </div>
+    </section>
+
+    <!-- ================= ML REPORT ================= -->
+    <section class="pane" id="pane-ml">
+      <h1 class="pane-title">ML report <span class="sub" id="mlSub"></span>
+        <button class="btn btn-ghost btn-sm ms-auto" id="mlReload"><i class="bi bi-arrow-clockwise"></i> Reload</button></h1>
+      <div id="mlBody"></div>
+    </section>
+
+    <!-- ================= COLLECT ================= -->
+    <section class="pane" id="pane-collect">
+      <h1 class="pane-title">Collect <span class="sub">record a labelled run for training</span></h1>
+      <div class="row g-3">
+        <div class="col-12 col-lg-7">
+          <div class="panel">
+            <h2 class="panel-title">1 · Pick what you are about to create</h2>
+            <div class="label-pick mb-3" id="labelPick"></div>
+            <h2 class="panel-title">2 · Optional note</h2>
+            <input id="collectNote" class="form-control mb-3" maxlength="80" placeholder="e.g. kettle boiling, door closed" autocomplete="off">
+            <div class="d-flex gap-2 flex-wrap">
+              <button id="btnStart" class="btn btn-go flex-fill"><i class="bi bi-record-fill"></i> Start recording</button>
+              <button id="btnStop"  class="btn btn-stop flex-fill" disabled><i class="bi bi-stop-fill"></i> Stop</button>
+            </div>
+            <div class="small mt-2" id="collectMsg" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-5">
+          <div class="panel">
+            <h2 class="panel-title">Status</h2>
+            <div class="rec-banner mb-3" id="recBanner"><span class="rec-dot"></span><div><div id="recTitle" class="fw-bold">Not recording</div><div id="recSub" class="muted small num"></div></div></div>
+            <h2 class="panel-title">Recent recording events</h2>
+            <ul class="log" id="collectLog" style="max-height:200px"></ul>
+            <p class="muted small mt-3 mb-0">Each run is saved as a CSV in <span class="num">data/runs/</span> with the label stored per row. Record one clean situation per run and let the sensors warm up first.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SYSTEM ================= -->
+    <section class="pane" id="pane-system">
+      <h1 class="pane-title">System</h1>
+      <div class="row g-3">
+        <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Backend</h2><dl class="kv" id="sysBackend"></dl></div></div>
+        <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">This connection</h2><dl class="kv" id="sysLink"></dl></div></div>
+        <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Timers (seconds)</h2><dl class="kv" id="sysTimers"></dl></div></div>
+        <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Thresholds and control</h2><dl class="kv" id="sysThr"></dl></div></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script src="/static/vendor/chart.umd.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
