@@ -4,14 +4,23 @@
   'use strict';
 
   /* ------------------------------------------------------------------ config you may edit */
-  const SENSORS = [   // key matches the backend row; color is a CSS variable from style.css
-    { key: 'mq135',    name: 'MQ-135',      sub: 'air quality',  dec: 2, unit: '',   icon: 'bi-wind',             color: '--s-mq135' },
-    { key: 'mq2',      name: 'MQ-2',        sub: 'smoke / gas',  dec: 2, unit: '',   icon: 'bi-fire',             color: '--s-mq2' },
-    { key: 'humidity', name: 'Humidity',    sub: '',             dec: 1, unit: '%',  icon: 'bi-droplet-half',     color: '--s-humidity' },
-    { key: 'temp_c',   name: 'Temperature', sub: '',             dec: 1, unit: '°C', icon: 'bi-thermometer-half', color: '--s-temp_c' },
-    { key: 'pir',      name: 'PIR',         sub: 'presence',     dec: 0, unit: '',   icon: 'bi-person-walking',   color: '--s-pir', binary: true },
+  const SENSORS_CANONICAL = [
+    { key: 'mq3',      name: 'MQ-3',        sub: 'alcohol / organic', dec: 2, unit: 'V',  icon: 'bi-droplet',          color: '--s-mq3' },
+    { key: 'mq4',      name: 'MQ-4',        sub: 'methane / CNG',     dec: 2, unit: 'V',  icon: 'bi-fire',             color: '--s-mq4' },
+    { key: 'mq135',    name: 'MQ-135',      sub: 'air quality / NH3', dec: 2, unit: 'V',  icon: 'bi-wind',             color: '--s-mq135' },
+    { key: 'humidity', name: 'Humidity',    sub: 'optional sensor',   dec: 1, unit: '%',  icon: 'bi-droplet-half',     color: '--s-humidity' },
+    { key: 'temp_c',   name: 'Temperature', sub: 'optional sensor',   dec: 1, unit: '°C', icon: 'bi-thermometer-half', color: '--s-temp_c' },
+    { key: 'pir',      name: 'PIR',         sub: 'presence',          dec: 0, unit: '',   icon: 'bi-person-walking',   color: '--s-pir', binary: true },
   ];
-  const CHARTED = SENSORS.filter(s => !s.binary);
+  const SENSORS_LEGACY = [
+    { key: 'mq135',    name: 'MQ-135',      sub: 'air quality',       dec: 2, unit: 'V',  icon: 'bi-wind',             color: '--s-mq135' },
+    { key: 'mq2',      name: 'MQ-2',        sub: 'smoke / gas',       dec: 2, unit: 'V',  icon: 'bi-fire',             color: '--s-mq2' },
+    { key: 'humidity', name: 'Humidity',    sub: 'optional sensor',   dec: 1, unit: '%',  icon: 'bi-droplet-half',     color: '--s-humidity' },
+    { key: 'temp_c',   name: 'Temperature', sub: 'optional sensor',   dec: 1, unit: '°C', icon: 'bi-thermometer-half', color: '--s-temp_c' },
+    { key: 'pir',      name: 'PIR',         sub: 'presence',          dec: 0, unit: '',   icon: 'bi-person-walking',   color: '--s-pir', binary: true },
+  ];
+  let SENSORS = SENSORS_CANONICAL;
+  let CHARTED = SENSORS.filter(s => !s.binary);
   const LABELS = ['clean', 'steam', 'cooking', 'foul'];
   const LABEL_ICON = { clean: 'bi-wind', steam: 'bi-cloud-haze2', cooking: 'bi-fire', foul: 'bi-emoji-dizzy' };
   const STATE_TEXT = {
@@ -52,6 +61,7 @@
     events: [], runs: [],
     collectFile: null, collectStartTs: null,
     health: null,
+    mlStatus: null,
   };
 
   /* ------------------------------------------------------------------ tabs (hash routing, works with the phone back button) */
@@ -62,8 +72,9 @@
     $$('.tab-link').forEach(a => { const on = a.dataset.tab === name; a.classList.toggle('active', on); on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); });
     window.scrollTo(0, 0);
     if (name === 'ml') loadReport();
+    if (name === 'classifier') loadMlStatus();
     if (name === 'runs') { loadRuns(); loadEvents(); }
-    if (name === 'system') { loadHealth(); loadConfig(); renderSystem(); }
+    if (name === 'system') { loadHealth(); loadConfig(); loadMlStatus(); renderSystem(); }
     requestAnimationFrame(() => Object.values(charts).forEach(c => c.resize()));
     renderCharts();
   }
@@ -238,10 +249,38 @@
     return true;
   }
 
+  function ensureSensors(row) {
+    if (!row || !row.sensors) return;
+    const hasMq3 = 'mq3' in row.sensors;
+    const hasMq2 = 'mq2' in row.sensors;
+    let target = SENSORS_CANONICAL;
+    if (hasMq2 && !hasMq3) {
+      target = SENSORS_LEGACY;
+    }
+    if (SENSORS !== target) {
+      SENSORS = target;
+      CHARTED = SENSORS.filter(s => !s.binary);
+      Object.keys(charts).forEach(k => {
+        if (k !== 'prob') {
+          charts[k].destroy();
+          delete charts[k];
+        }
+      });
+      clear($('#statCards'));
+      clear($('#chartCards'));
+      clear($('#sensorTable tbody'));
+      buildStatCards();
+      buildChartCards();
+      buildSensorTable();
+      buildCharts();
+    }
+  }
+
   function handle(msg) {
     S.lastMsgAt = Date.now();
     S.stale = !!msg.stale; S.ageS = msg.age_s;
     S.row = msg.row || null;
+    if (S.row) ensureSensors(S.row);
     const fresh = S.row ? pushRow(S.row) : false;
     renderTop(); renderHero(); renderStats(); renderClassifier(); renderSensorTable(); renderCollect();
     if (fresh) renderCharts();
@@ -254,6 +293,14 @@
     const mode = r ? r.mode : null;
     $('#modeText').textContent = mode || 'NO DATA';
     badge.className = 'mode-badge' + (mode ? ' mode-' + mode.toLowerCase() : '');
+
+    // Prominent simulated indicator - never present simulated data as real hardware
+    const simBanner = $('#simulatedBanner');
+    if (simBanner) {
+      const isSim = (mode === 'SIMULATED' || (S.health && S.health.mode === 'SIMULATED') || (S.mlStatus && S.mlStatus.safety && S.mlStatus.safety.hardware_mode === 'SIMULATED'));
+      simBanner.classList.toggle('d-none', !isSim);
+    }
+
     $('#staleChip').classList.toggle('d-none', !(r && S.stale));
     const pill = $('#statePill');
     $('#stateText').textContent = r ? r.state : '—';
@@ -311,12 +358,18 @@
   function renderStats() {
     const r = S.row, thr = (S.cfg && S.cfg.thresholds) || {};
     SENSORS.forEach(s => {
-      const card = $('#stat-' + s.key), v = r ? r.sensors[s.key] : null;
+      const card = $('#stat-' + s.key);
+      if (!card) return;
+      const v = r && r.sensors ? r.sensors[s.key] : null;
       const health = r && r.health ? r.health[s.key] : null, bad = r && health && health !== 'ok';
       $('.hdot', card).classList.toggle('bad', !!bad); $('.hdot', card).title = health || '';
       card.classList.toggle('faulty', !!bad);
-      if (s.binary) { $('.v', card).textContent = !r || v == null ? '—' : (+v ? 'Present' : 'None'); $('.rise', card).textContent = ''; return; }
-      $('.v', card).textContent = bad && !isNum(v) ? 'FAULT' : num(v, s.dec);
+      if (s.binary) {
+        $('.v', card).textContent = !r || v == null ? '—' : (+v ? 'Present' : 'None');
+        $('.rise', card).textContent = '';
+        return;
+      }
+      $('.v', card).textContent = bad && !isNum(v) ? 'FAULT' : (v == null ? '—' : num(v, s.dec));
       const base = r && r.baseline ? r.baseline[s.key] : null, d = r && r.deltas ? r.deltas[s.key] : null;
       $('.base', card).textContent = num(base, s.dec);
       $('.rise', card).textContent = signed(d, s.dec);
@@ -338,32 +391,175 @@
 
   /* ------------------------------------------------------------------ classifier */
   function renderClassifier() {
-    const r = S.row, ml = r && r.ml;
-    const lab = ml ? ml.label : null;
-    // mini card on Live
-    const ml1 = $('#miniLabel'); ml1.textContent = lab || '—'; ml1.style.textTransform = 'capitalize'; ml1.style.color = lab ? css('--c-' + lab) : '';
-    $('#miniConf').textContent = ml ? pct(ml.confidence, 0) : '';
-    fillProbBars($('#miniProbs'), ml && ml.probs, lab);
-    // full tab
-    const big = $('#clfLabel'); big.textContent = lab || '—'; big.style.color = lab ? css('--c-' + lab) : '';
-    $('#clfConf').textContent = ml ? pct(ml.confidence, 1) + ' confident' : '';
-    fillProbBars($('#clfProbs'), ml && ml.probs, lab);
-    $('#clfSource').textContent = ml ? 'source: ' + ml.source : '';
+    const r = S.row, ml = (r && r.ml) || {};
+    const mls = S.mlStatus || {};
+    
+    // Explicit ML Inference Status
+    const rawStatus = mls.status || ml.status || (ml.source && String(ml.source).startsWith('rules') ? 'RULES_FALLBACK' : 'MODEL_UNAVAILABLE');
+    const status = String(rawStatus).toUpperCase();
+    
+    const pill = $('#clfStatusPill');
+    if (pill) {
+      pill.textContent = status;
+      pill.className = 'status-pill status-' + status.toLowerCase().replace(/_/g, '-');
+    }
+
+    // Diagnostic message banner
+    const clfMsg = $('#clfMsg');
+    if (clfMsg) {
+      if (status === 'MODEL_UNAVAILABLE') {
+        clfMsg.textContent = 'No trained model loaded. ML predictions are unavailable or using the explicitly identified experimental fallback.';
+        clfMsg.className = 'alert alert-warning p-2 mb-3 small';
+      } else if (status === 'RULES_FALLBACK') {
+        clfMsg.textContent = 'Notice: Operating on heuristic rules fallback. No trained model artifact is active; predictions are experimental estimates.';
+        clfMsg.className = 'alert alert-info p-2 mb-3 small';
+      } else if (status === 'SENSOR_FAULT') {
+        clfMsg.textContent = 'Sensor fault detected on critical inputs. ML inference is suspended to protect control safety.';
+        clfMsg.className = 'alert alert-danger p-2 mb-3 small';
+      } else if (status === 'INPUT_INVALID') {
+        clfMsg.textContent = 'Invalid sensor inputs (missing, null, NaN, or non-finite). ML inference cannot be computed.';
+        clfMsg.className = 'alert alert-danger p-2 mb-3 small';
+      } else if (status === 'MODEL_ERROR') {
+        clfMsg.textContent = 'Model error occurred during feature calculation or inference: ' + (mls.error || ml.error || 'Check server logs');
+        clfMsg.className = 'alert alert-danger p-2 mb-3 small';
+      } else if (status === 'VALID_MODEL') {
+        clfMsg.textContent = `Trained model active: ${mls.model_id || 'Canonical Classifier'} · Contract: ${mls.model_health ? mls.model_health.contract_version : '32 features'}`;
+        clfMsg.className = 'alert alert-success p-2 mb-3 small';
+      } else {
+        clfMsg.classList.add('d-none');
+      }
+    }
+
+    const isValid = (status === 'VALID_MODEL');
+    const isFallback = (status === 'RULES_FALLBACK');
+    const lab = (isValid || isFallback) ? (ml.label || mls.label || null) : null;
+    const conf = isValid ? (isNum(ml.confidence) ? ml.confidence : (isNum(mls.confidence) ? mls.confidence : null)) : null;
+
+    // Mini card on Live
+    const ml1 = $('#miniLabel');
+    if (ml1) {
+      ml1.textContent = lab || (status === 'MODEL_UNAVAILABLE' ? 'UNAVAILABLE' : status);
+      ml1.style.textTransform = lab ? 'capitalize' : 'none';
+      ml1.style.color = lab ? css('--c-' + lab) : css('--muted');
+    }
+    const miniConf = $('#miniConf');
+    if (miniConf) {
+      miniConf.textContent = isValid && isNum(conf) ? pct(conf, 0) : (isFallback ? '(rules)' : '');
+    }
+    fillProbBars($('#miniProbs'), isValid ? ml.probs : null, lab);
+
+    // Full Classifier Tab
+    const big = $('#clfLabel');
+    if (big) {
+      big.textContent = lab || '—';
+      big.style.color = lab ? css('--c-' + lab) : '';
+    }
+    const clfConf = $('#clfConf');
+    if (clfConf) {
+      if (isValid && isNum(conf)) {
+        clfConf.textContent = pct(conf, 1) + ' confident';
+      } else if (isFallback) {
+        clfConf.textContent = 'Rules heuristic (no trained model confidence)';
+      } else {
+        clfConf.textContent = 'Confidence unavailable (' + status + ')';
+      }
+    }
+    fillProbBars($('#clfProbs'), isValid ? (ml.probs || (mls.model_health && mls.model_health.probs)) : null, lab);
+
+    const clfSource = $('#clfSource');
+    if (clfSource) {
+      clfSource.textContent = 'source: ' + (mls.source || ml.source || (isValid ? 'trained model' : 'unavailable'));
+    }
+
     const note = clear($('#clfNote'));
-    if (ml && String(ml.source).startsWith('rules')) note.append(chip('rules placeholder, no trained model loaded', 'chip-warn', 'bi-info-circle'));
+    if (isFallback) {
+      note.append(chip('rules fallback active', 'chip-warn', 'bi-info-circle'));
+    } else if (status === 'MODEL_UNAVAILABLE') {
+      note.append(chip('no model artifact', 'chip-bad', 'bi-exclamation-circle'));
+    } else if (status === 'SENSOR_FAULT' || status === 'INPUT_INVALID') {
+      note.append(chip(status, 'chip-bad', 'bi-shield-x'));
+    }
+
     const truth = $('#clfTruth');
-    if (r && r.truth) {
-      const ok = r.truth === lab;
-      truth.textContent = `Simulator ground truth: ${r.truth} · ${ok ? 'prediction matches' : 'prediction differs'}`;
-      truth.style.color = ok ? css('--idle') : css('--running');
-    } else truth.textContent = '';
+    if (truth) {
+      if (r && r.truth) {
+        const ok = r.truth === lab;
+        truth.textContent = `Simulator ground truth: ${r.truth} · ${ok ? 'prediction matches' : 'prediction differs'}`;
+        truth.style.color = ok ? css('--idle') : css('--running');
+      } else truth.textContent = '';
+    }
+
+    // Model Health & Contract Panel
+    const h = mls.model_health;
+    const contractChip = $('#contractChip');
+    if (contractChip && h) {
+      contractChip.textContent = `${h.contract_version || 'CANONICAL_32'} (${h.feature_count ?? 32} features)`;
+      contractChip.className = 'chip ' + (h.contract_compatible ? 'chip-ok' : 'chip-bad');
+    }
+    const healthKV = $('#modelHealthKV');
+    if (healthKV) {
+      if (h) {
+        kv(healthKV, [
+          ['Artifact present', h.artifact_present ? 'Yes' : 'No (data/models/latest.joblib missing)'],
+          ['Load status', h.model_loaded ? 'Loaded & Valid' : 'Not Loaded'],
+          ['Model identifier', h.model_name || 'None'],
+          ['Contract version', h.contract_version || 'CANONICAL_32'],
+          ['Feature count', `${h.feature_count ?? 0} (expected ${h.expected_feature_count ?? 32})`],
+          ['Contract compatible', h.contract_compatible ? 'Compatible' : 'Incompatible / Missing'],
+          ['Source mode', h.source_mode ? h.source_mode.toUpperCase() : 'SIMULATED'],
+          ['Last inference time', mls.timestamp ? clock(mls.timestamp) : (r ? clock(r.ts) : '—')],
+          ['Last error', h.last_error || 'None'],
+        ]);
+      } else {
+        kv(healthKV, [['Status', 'Querying /api/ml/status…']]);
+      }
+    }
+
+    // Training Readiness Panel
+    const tr = mls.training_readiness;
+    const trBadge = $('#trainingReadinessBadge');
+    if (trBadge && tr) {
+      trBadge.textContent = tr.status.replace(/_/g, ' ');
+      trBadge.className = 'readiness-badge readiness-' + tr.status.toLowerCase().replace(/_/g, '-');
+    }
+    const trList = $('#trainingChecklist');
+    if (trList && tr) {
+      clear(trList);
+      const items = [
+        ['Dataset available (data/dataset.csv)', tr.dataset_available],
+        ['Dataset schema valid (required columns)', tr.dataset_schema_valid],
+        ['Required labels present (≥2 distinct)', tr.required_labels_present],
+        ['Session metadata available (run_id ≥2)', tr.session_metadata_available],
+        ['Feature extraction valid (32 canonical)', tr.feature_extraction_valid],
+        ['Evaluation strategy configured', tr.evaluation_strategy_configured],
+        ['Training prerequisites satisfied', tr.training_prerequisites_satisfied],
+        ['Model trained', tr.model_trained],
+        ['Model artifact validated', tr.model_artifact_validated],
+      ];
+      items.forEach(([label, pass]) => {
+        const li = el('li', 'chk-item ' + (pass ? 'chk-pass' : 'chk-fail'));
+        const icon = el('i', 'bi chk-icon ' + (pass ? 'bi-check-circle-fill' : 'bi-x-circle-fill'));
+        li.append(icon, document.createTextNode(' ' + label));
+        trList.append(li);
+      });
+    }
+    const reasonsDiv = $('#readinessReasons');
+    if (reasonsDiv && tr) {
+      if (tr.reasons && tr.reasons.length) {
+        reasonsDiv.innerHTML = '<strong>Readiness details:</strong><br>' + tr.reasons.map(x => '• ' + x).join('<br>');
+      } else {
+        reasonsDiv.textContent = tr.status === 'TRAINED' ? 'Model is trained, serialized, and loaded.' : 'All pipeline requirements satisfied for training run.';
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ sensors tab */
   function renderSensorTable() {
     const r = S.row, thr = (S.cfg && S.cfg.thresholds) || {};
     SENSORS.forEach(s => {
-      const tr = $('#srow-' + s.key), v = r ? r.sensors[s.key] : null;
+      const tr = $('#srow-' + s.key);
+      if (!tr) return;
+      const v = r && r.sensors ? r.sensors[s.key] : null;
       const health = r && r.health ? r.health[s.key] : null;
       if (s.binary) {
         $('.v', tr).textContent = !r || v == null ? '—' : (+v ? 'present' : 'none');
@@ -371,7 +567,7 @@
         $('.bar > i', tr).style.width = '0%';
       } else {
         const b = r && r.baseline ? r.baseline[s.key] : null, d = r && r.deltas ? r.deltas[s.key] : null, t = thr[s.key];
-        $('.v', tr).textContent = num(v, s.dec) + (s.unit && isNum(v) ? ' ' + s.unit : '');
+        $('.v', tr).textContent = v == null ? '—' : (num(v, s.dec) + (s.unit && isNum(v) ? ' ' + s.unit : ''));
         $('.b', tr).textContent = num(b, s.dec);
         $('.r', tr).textContent = signed(d, s.dec);
         $('.t', tr).textContent = isNum(t) ? '+' + num(t, s.dec) : '—';
@@ -381,6 +577,7 @@
       }
       const h = $('.h', tr); clear(h);
       if (health) h.append(chip(health, health === 'ok' ? 'chip-ok' : 'chip-bad'));
+      else if (v == null && ['humidity', 'temp_c', 'pir'].includes(s.key)) h.append(chip('disconnected', 'chip-muted'));
     });
   }
 
@@ -588,21 +785,33 @@
   }
 
   /* ------------------------------------------------------------------ system */
-  const loadHealth = () => api('/api/health').then(j => { S.health = j; renderSystem(); }).catch(() => { S.health = null; renderSystem(); });
-  const loadConfig = () => api('/api/config').then(j => { S.cfg = j; renderSystem(); renderTimers(); renderStats(); }).catch(() => {});
+  const loadHealth   = () => api('/api/health').then(j => { S.health = j; renderSystem(); }).catch(() => { S.health = null; renderSystem(); });
+  const loadConfig   = () => api('/api/config').then(j => { S.cfg = j; renderSystem(); renderTimers(); renderStats(); }).catch(() => {});
+  const loadMlStatus = () => api('/api/ml/status').then(j => { S.mlStatus = j; renderClassifier(); renderSystem(); }).catch(() => {});
 
   function kv(host, pairs) {
     clear(host);
     pairs.forEach(([k, v, plain]) => { host.append(el('dt', null, k)); const dd = el('dd', plain ? 'plain' : null, v == null ? '—' : String(v)); host.append(dd); });
   }
   function renderSystem() {
-    const h = S.health, c = S.cfg;
+    const h = S.health, c = S.cfg, mls = S.mlStatus;
     const skew = h && isNum(h.server_time) ? (Date.now() / 1000 - h.server_time) : null;
     kv($('#sysBackend'), [
       ['Source', h ? h.source : '—'], ['Mode', h ? h.mode || '—' : '—'], ['Schema version', h ? h.schema : '—'],
       ['Last row age', h && isNum(h.last_row_age_s) ? h.last_row_age_s + ' s' : '—'],
       ['Data is stale', h ? (h.stale ? 'yes' : 'no') : '—'],
       ['Rows / events / runs in DB', h && h.db ? `${h.db.rows} / ${h.db.events} / ${h.db.runs}` : '—'],
+    ]);
+    const sft = mls && mls.safety;
+    kv($('#sysSafety'), [
+      ['Hardware mode', sft ? sft.hardware_mode : (h ? h.mode : 'SIMULATED')],
+      ['Hardware enabled', sft ? (sft.hardware_enabled ? 'ENABLED' : 'DISABLED (Safe Default)') : 'DISABLED (Safe Default)'],
+      ['Fan control enabled', sft ? (sft.fan_control_enabled ? 'ENABLED' : 'DISABLED (Safe Default)') : 'DISABLED (Safe Default)'],
+      ['Physical control disabled', sft ? (sft.physical_control_disabled ? 'YES (Lockout Active)' : 'NO') : 'YES (Lockout Active)'],
+      ['Controller state', sft ? sft.controller_state : (S.row ? S.row.state : '—')],
+      ['Sensor faults', sft && sft.sensor_faults.length ? sft.sensor_faults.join(', ') : 'None'],
+      ['ML faults', sft && sft.ml_faults.length ? sft.ml_faults.join(', ') : 'None'],
+      ['Actuation errors', sft && sft.actuation_errors.length ? sft.actuation_errors.join(', ') : 'None'],
     ]);
     kv($('#sysLink'), [
       ['Live link (WebSocket)', S.wsOk ? 'connected' : 'not connected', true],
@@ -630,7 +839,7 @@
   let ws = null, retry = 0;
   function connect() {
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/live'); } catch (e) { return scheduleRetry(); }
-    ws.onopen = () => { S.wsOk = true; retry = 0; renderLink(); loadConfig(); };
+    ws.onopen = () => { S.wsOk = true; retry = 0; renderLink(); loadConfig(); loadMlStatus(); };
     ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (_) { /* ignore a bad frame */ } };
     ws.onclose = () => { if (S.wsOk) S.reconnects++; S.wsOk = false; renderLink(); scheduleRetry(); };
     ws.onerror = () => { try { ws.close(); } catch (_) { } };
@@ -642,7 +851,8 @@
   setInterval(() => { renderLink(); if ($('#pane-system').classList.contains('active')) renderSystem(); }, 1000);
   setInterval(loadEvents, 3000);
   setInterval(() => { if ($('#pane-runs').classList.contains('active')) loadRuns(); }, 5000);
-  setInterval(() => { if ($('#pane-system').classList.contains('active')) loadHealth(); }, 5000);
+  setInterval(() => { if ($('#pane-system').classList.contains('active')) { loadHealth(); loadMlStatus(); } }, 5000);
+  setInterval(() => { if ($('#pane-classifier').classList.contains('active')) loadMlStatus(); }, 3000);
 
   /* ------------------------------------------------------------------ start */
   function init() {
@@ -656,6 +866,27 @@
     });
     $('#evFilter').addEventListener('change', renderEvents);
     $('#mlReload').addEventListener('click', loadReport);
+
+    const btnReload = $('#btnReloadModel');
+    if (btnReload) {
+      btnReload.addEventListener('click', () => {
+        btnReload.disabled = true;
+        btnReload.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Validating & Reloading…';
+        api('/api/ml/reload', { method: 'POST' })
+          .then(res => {
+            loadMlStatus();
+            loadReport();
+          })
+          .catch(err => {
+            loadMlStatus();
+          })
+          .finally(() => {
+            btnReload.disabled = false;
+            btnReload.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Reload Model';
+          });
+      });
+    }
+
     $('#btnStart').addEventListener('click', () => {
       const label = ($('input[name=collectLabel]:checked') || {}).value;
       collectCall('/api/collect/start', { label, note: $('#collectNote').value.trim() });
@@ -664,7 +895,7 @@
 
     showTab(location.hash.slice(1));
     // config first (thresholds for the charts), then history, then live
-    Promise.allSettled([loadConfig(), api('/api/history?minutes=10').then(rows => { rows.forEach(pushRow); renderCharts(); }), loadEvents()])
+    Promise.allSettled([loadConfig(), loadMlStatus(), api('/api/history?minutes=10').then(rows => { rows.forEach(pushRow); renderCharts(); }), loadEvents()])
       .finally(connect);
   }
   init();

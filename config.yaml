@@ -1,31 +1,97 @@
-# ---- which data source feeds the system -------------------------------
-# fake   : simulator (UI development)               -> badge SIMULATED
-# replay : replays a recorded dataset CSV           -> badge REPLAY
-# serial : ESP32 streaming CSV lines over USB       -> badge LIVE
-# live   : Pi reads sensors itself (hardware/sensors.py) -> badge LIVE
-source: fake
+# ==============================================================================
+# ATOMBERG EFFICIO APEX: AI-POWERED SMART VENTILATION SYSTEM CONFIGURATION
+# ==============================================================================
 
+# ---- Data Source & Runtime Mode ----------------------------------------------
+# fake   : simulator for development/bench testing (badge: SIMULATED)
+# replay : replays a recorded dataset CSV          (badge: REPLAY)
+# serial : ESP32 streaming CSV lines over USB      (badge: LIVE)
+# live   : Pi reads sensors via MCP3008 ADC SPI    (badge: LIVE)
+source: fake
+runtime_mode: simulation      # simulation | replay | live
+
+# ---- Safety Flags (Disabled by default for testing/safety) --------------------
+# Physical hardware access and fan relay driving must remain false until
+# hardware is properly wired, electrically conditioned, and benchmark-verified.
+hardware_enabled: false       # Set true only on physical Raspberry Pi with MCP3008
+fan_control_enabled: false    # Set true only when safe fan actuation is confirmed
+
+# ---- Database & Storage Paths ------------------------------------------------
 db_path: data/app.db
 runs_dir: data/runs
 tick_s: 1.0
-speed: 1.0            # fake/replay only. 20 = 20x faster than real time (testing)
-demo_timers: true     # show "shortened timers" on the dashboard when true
+speed: 1.0                    # fake/replay only (e.g. 20 = 20x faster for UI/tests)
+demo_timers: true             # true = shortened timers for development / demo
 retention_hours: 24
 
-timers_demo: {warmup_s: 20, run_on_s: 20, cap_s: 120, cooldown_s: 15, clear_hold_s: 5, debounce: 3, fault_clear_s: 5}
-timers_real: {warmup_s: 300, run_on_s: 300, cap_s: 1800, cooldown_s: 120, clear_hold_s: 30, debounce: 3, fault_clear_s: 10}
+# ---- Logging & Diagnostics ---------------------------------------------------
+logging:
+  level: INFO
+  format: "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
 
-# rise above baseline that counts as a trigger (units follow the sensor values)
-thresholds: {mq135: 0.25, mq2: 0.25, humidity: 8.0, temp_c: 4.0}
-clear_ratio: 0.5      # air is "clear" when every rise is below clear_ratio * threshold
-pir_scale: 0.85       # PIR presence makes triggers slightly more sensitive
-baseline: {alpha: 0.02, alpha_fast: 0.1, max_freeze_s: 600}
-ml: {min_confidence: 0.7, threshold_scale: 0.7, model_path: ml/model/model.joblib}
+# ---- State Machine Timers -----------------------------------------------------
+timers_demo:
+  warmup_s: 20
+  run_on_s: 20
+  cap_s: 120
+  cooldown_s: 15
+  clear_hold_s: 5
+  debounce: 3
+  fault_clear_s: 5
 
-fake: {scenario: cycle, seed: 7}   # cycle | clean | steam | cooking | foul | fault
-serial: {port: /dev/ttyUSB0, baud: 115200, stale_s: 3}
-# serial line from the ESP32, one per second:  mq135,mq2,humidity,temp_c,pir,override
+timers_real:
+  warmup_s: 300
+  run_on_s: 300
+  cap_s: 1800
+  cooldown_s: 120
+  clear_hold_s: 30
+  debounce: 3
+  fault_clear_s: 10
+
+# ---- Triggers and Thresholds -------------------------------------------------
+# Rise above baseline that triggers automation (volts or normalized sensor units)
+thresholds:
+  mq3: 0.25                   # Alcohol / VOC trigger threshold (volts)
+  mq4: 0.25                   # Methane / Natural gas trigger threshold (volts)
+  mq135: 0.25                 # Air quality / NH3 / CO2 trigger threshold (volts)
+  mq2: 0.25                   # Legacy prototype combustible channel
+  humidity: 8.0               # %RH rise threshold
+  temp_c: 4.0                 # °C rise threshold
+
+clear_ratio: 0.5              # Air is clear when deltas < clear_ratio * threshold
+pir_scale: 0.85               # PIR presence scales threshold slightly lower (more sensitive)
+baseline:
+  alpha: 0.02
+  alpha_fast: 0.1
+  max_freeze_s: 600
+
+# ---- Machine Learning Inference ----------------------------------------------
+ml:
+  min_confidence: 0.7
+  threshold_scale: 0.7
+  model_path: ml/artifacts/model.joblib
+  allow_rules_fallback: true          # Use provisional heuristic rules if model is absent
+  allow_rules_fallback_trigger: false # SAFETY: Fallback placeholder cannot lower thresholds
+
+# ---- Source-Specific Parameters ----------------------------------------------
+fake:
+  scenario: cycle             # cycle | clean | steam | cooking | foul | fault
+  seed: 7
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 115200
+  stale_s: 3
+
 replay:
   file: data/replay.csv
   loop: true
-  columns: {mq135: mq135, mq2: mq2, humidity: humidity, temp_c: temp_c, pir: pir, label: label}
+  columns:
+    mq3: mq3
+    mq4: mq4
+    mq135: mq135
+    mq2: mq2
+    humidity: humidity
+    temp_c: temp_c
+    pir: pir
+    label: label

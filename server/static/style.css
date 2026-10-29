@@ -32,8 +32,10 @@
   --c-foul:    #f472b6;
 
   /* sensor line colours */
-  --s-mq135:    #2dd4bf;
-  --s-mq2:      #fb923c;
+  --s-mq3:      #38bdf8;   /* sky blue / alcohol */
+  --s-mq4:      #f97316;   /* orange / methane */
+  --s-mq135:    #2dd4bf;   /* teal / air quality */
+  --s-mq2:      #a78bfa;   /* purple / legacy combustible */
   --s-humidity: #22d3ee;
   --s-temp_c:   #f472b6;
   --s-pir:      #cbd5e1;
@@ -277,6 +279,42 @@ a { color: var(--runon); }
 .btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
 .btn-sm { padding: 5px 11px; font-size: .8rem; }
+
+/* ML inference status badges */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 7px; border-radius: 999px;
+  font-size: .8rem; font-weight: 700; letter-spacing: .5px; padding: 5px 14px;
+  border: 1px solid var(--line); background: var(--surface-2); text-transform: uppercase;
+}
+.status-valid-model { color: var(--idle); border-color: color-mix(in srgb, var(--idle) 40%, transparent); background: color-mix(in srgb, var(--idle) 15%, var(--surface-2)); }
+.status-rules-fallback { color: var(--running); border-color: color-mix(in srgb, var(--running) 40%, transparent); background: color-mix(in srgb, var(--running) 15%, var(--surface-2)); }
+.status-model-unavailable { color: var(--warmup); border-color: color-mix(in srgb, var(--warmup) 40%, transparent); background: color-mix(in srgb, var(--warmup) 15%, var(--surface-2)); }
+.status-model-error, .status-sensor-fault, .status-input-invalid { color: var(--fault); border-color: color-mix(in srgb, var(--fault) 40%, transparent); background: color-mix(in srgb, var(--fault) 15%, var(--surface-2)); }
+
+.simulated-warning-banner {
+  background: color-mix(in srgb, var(--mode-simulated) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--mode-simulated) 40%, var(--line));
+  border-radius: var(--radius); padding: 10px 16px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px; font-size: .86rem; color: #ddd6fe;
+}
+.simulated-warning-banner i { font-size: 1.25rem; color: var(--mode-simulated); }
+
+.readiness-badge {
+  display: inline-flex; align-items: center; gap: 6px; border-radius: 999px;
+  font-size: .75rem; font-weight: 700; padding: 4px 12px; text-transform: uppercase;
+}
+.readiness-ready { background: color-mix(in srgb, var(--idle) 20%, transparent); color: var(--idle); border: 1px solid var(--idle); }
+.readiness-not-ready { background: color-mix(in srgb, var(--running) 20%, transparent); color: var(--running); border: 1px solid var(--running); }
+.readiness-trained { background: color-mix(in srgb, var(--runon) 20%, transparent); color: var(--runon); border: 1px solid var(--runon); }
+
+.checklist { list-style: none; padding: 0; margin: 0; }
+.checklist li { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: .86rem; }
+.checklist li:last-child { border-bottom: none; }
+.chk-icon { font-size: 1.15rem; }
+.chk-icon.pass { color: var(--idle); }
+.chk-icon.fail { color: var(--fault); }
+.chk-icon.warn { color: var(--running); }
+
 
 /* ---------- phone: the sidebar becomes a bottom tab bar ---------- */
 @media (max-width: 767.98px) {

@@ -1,41 +1,67 @@
-"""Classifier wrapper. Uses the trained model if present, otherwise a clearly-labelled rules placeholder."""
-import importlib.util, pathlib
+"""Classifier runtime wrapper bridging control orchestration with ml.inference."""
+import pathlib
+from typing import Dict, Any, Sequence, Optional
 from common import config
-from common.schema import LABELS, LABEL_NAMES
+from common.logger import get_logger
+from common.schema import LABEL_NAMES, InferenceStatus
+from ml.inference.predictor import AirQualityPredictor
+
+logger = get_logger("control.ml_runtime")
+
 
 class Classifier:
-    def __init__(self, cfg):
-        self.cfg, self.model, self.feat, self.names = cfg, None, None, LABEL_NAMES
-        self.source = "rules-placeholder"
-        mp = config.path(cfg, cfg["ml"]["model_path"])
-        fp = mp.parent.parent / "features.py"
-        try:
-            if mp.exists() and fp.exists():
-                import joblib
-                spec = importlib.util.spec_from_file_location("features", fp)
-                mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-                self.model, self.feat = joblib.load(mp), mod.build_features
-                self.names = [LABELS.get(c, str(c)) if isinstance(c, int) else str(c) for c in self.model.classes_]
-                self.source = "model:" + mp.name
-        except Exception as e:                      # never let ML break control
-            print("[ml] model not loaded, using placeholder:", e)
-            self.model = None
+    """Wraps model inference for the live control loop with fail-safe fallback."""
 
-    def predict(self, sensors, deltas, thr, history):
-        if self.model is not None:
-            try:
-                p = self.model.predict_proba([self.feat(history)])[0]
-                probs = {n: float(x) for n, x in zip(self.names, p)}
-                lab = max(probs, key=probs.get)
-                return {"label": lab, "confidence": probs[lab], "probs": probs, "source": self.source}
-            except Exception as e:
-                print("[ml] predict failed, using placeholder:", e)
-        r = {k: max(0.0, deltas[k] / thr[k]) for k in thr}
-        steam = max(0.0, r["humidity"] - 0.5 * max(r["mq2"], r["temp_c"]))
-        cook = (r["temp_c"] + r["mq2"]) / 2
-        foul = max(0.0, r["mq135"] - 0.5 * max(r["humidity"], r["temp_c"], r["mq2"]))
-        s = {"clean": max(0.2, 1.0 - max(steam, cook, foul)), "steam": steam, "cooking": cook, "foul": foul}
-        tot = sum(s.values()) or 1.0
-        probs = {k: v / tot for k, v in s.items()}
-        lab = max(probs, key=probs.get)
-        return {"label": lab, "confidence": probs[lab], "probs": probs, "source": "rules-placeholder"}
+    def __init__(self, cfg: Dict[str, Any]):
+        self.cfg = cfg
+        self.names = list(LABEL_NAMES)
+        ml_cfg = cfg.get("ml", {})
+        model_path = ml_cfg.get("model_path")
+        self.allow_fallback = ml_cfg.get("allow_rules_fallback", True)
+
+        if model_path:
+            p = pathlib.Path(model_path)
+            mp = p if p.is_absolute() else config.path(cfg, str(model_path))
+            self.predictor = AirQualityPredictor(mp)
+        else:
+            self.predictor = AirQualityPredictor()
+
+        self.source = self.predictor.model_source
+        self.status = self.predictor.status
+
+    def predict(
+        self,
+        sensors: Dict[str, Any],
+        deltas: Dict[str, float],
+        thr: Dict[str, float],
+        history: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Perform classification on recent readings with explicit status reporting."""
+        # 1. If genuine model bundle is loaded, execute model inference
+        if self.predictor.is_loaded:
+            res = self.predictor.predict_history(history)
+            if res.status == InferenceStatus.VALID_MODEL:
+                return res.to_dict()
+            # Do NOT conceal hardware sensor faults or invalid inputs behind rules fallback!
+            if res.status in (InferenceStatus.SENSOR_FAULT, InferenceStatus.INPUT_INVALID):
+                return res.to_dict()
+            logger.warning("Model prediction returned non-valid status '%s': %s", res.status, res.error)
+            if not self.allow_fallback:
+                return res.to_dict()
+
+        # 2. Rules-based provisional fallback if permitted
+        if self.allow_fallback:
+            res = self.predictor.fallback_predict(sensors, deltas, thr)
+            return res.to_dict()
+
+        # 3. Model unavailable / fallback disabled state
+        return {
+            "status": self.predictor.status,
+            "label": None,
+            "confidence": None,
+            "probs": None,
+            "source": self.predictor.model_source,
+            "model_id": self.predictor.model_id,
+            "error": self.predictor.last_error or "Model unavailable and fallback disabled",
+            "ts": 0.0,
+        }

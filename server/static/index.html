@@ -49,6 +49,12 @@
 
     <!-- ================= LIVE ================= -->
     <section class="pane" id="pane-live">
+      <div id="simulatedBanner" class="simulated-warning-banner d-none">
+        <i class="bi bi-cpu"></i>
+        <div>
+          <strong>SIMULATED ENVIRONMENT:</strong> Live readings are generated from software fixtures. Physical ADC / relay hardware is unconnected and safely disabled (<span class="num">hardware_enabled: false</span>).
+        </div>
+      </div>
       <div class="row g-3 mb-3">
         <div class="col-12 col-lg-4">
           <div class="panel" id="heroState">
@@ -101,8 +107,18 @@
     </section>
 
     <!-- ================= CLASSIFIER ================= -->
+    <!-- ================= CLASSIFIER ================= -->
     <section class="pane" id="pane-classifier">
-      <h1 class="pane-title">Classifier <span class="sub" id="clfSource"></span></h1>
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <h1 class="pane-title m-0">Classifier <span class="sub" id="clfSource"></span></h1>
+        <div class="d-flex align-items-center gap-2">
+          <span id="clfStatusPill" class="status-pill status-model-unavailable">MODEL_UNAVAILABLE</span>
+          <button id="btnReloadModel" class="btn btn-ghost btn-sm" title="Validate and reload model artifact"><i class="bi bi-arrow-clockwise"></i> Reload Model</button>
+        </div>
+      </div>
+
+      <div id="clfMsg" class="alert alert-dark p-2 mb-3 small d-none" style="background:var(--surface-2); border-color:var(--line);"></div>
+
       <div class="row g-3 mb-3">
         <div class="col-12 col-lg-5">
           <div class="panel">
@@ -119,6 +135,22 @@
           <div class="panel">
             <h2 class="panel-title"><span>Probability over time</span><span class="legend-note">same window as Live</span></h2>
             <div class="chart-box tall"><canvas id="probChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-6">
+          <div class="panel">
+            <h2 class="panel-title"><span><i class="bi bi-shield-check"></i> Model Health & Contract</span><span id="contractChip" class="chip">32 features</span></h2>
+            <dl class="kv" id="modelHealthKV"></dl>
+          </div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <div class="panel">
+            <h2 class="panel-title"><span><i class="bi bi-mortarboard"></i> Training Readiness</span><span id="trainingReadinessBadge" class="readiness-badge readiness-not-ready">NOT READY</span></h2>
+            <ul class="checklist" id="trainingChecklist"></ul>
+            <div id="readinessReasons" class="mt-2 small text-muted"></div>
           </div>
         </div>
       </div>
@@ -203,6 +235,7 @@
       <h1 class="pane-title">System</h1>
       <div class="row g-3">
         <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Backend</h2><dl class="kv" id="sysBackend"></dl></div></div>
+        <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title"><i class="bi bi-shield-lock"></i> Safety & Actuation Gates</h2><dl class="kv" id="sysSafety"></dl></div></div>
         <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">This connection</h2><dl class="kv" id="sysLink"></dl></div></div>
         <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Timers (seconds)</h2><dl class="kv" id="sysTimers"></dl></div></div>
         <div class="col-12 col-lg-6"><div class="panel"><h2 class="panel-title">Thresholds and control</h2><dl class="kv" id="sysThr"></dl></div></div>

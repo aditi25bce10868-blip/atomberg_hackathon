@@ -1,4 +1,39 @@
-data/
+# Python bytecode and caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .pytest_cache/
+.pytest_tmp/
+.coverage
+htmlcov/
+
+# Local databases and runtime artifacts
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/runs/*.csv
+
+# Machine learning datasets and models (preserve directory structures via .gitkeep)
+ml/data/raw/*
+!ml/data/raw/.gitkeep
+!ml/data/raw/README.md
+
+ml/data/processed/*
+!ml/data/processed/.gitkeep
+
+ml/data/external/*
+!ml/data/external/.gitkeep
+
+ml/artifacts/*.joblib
+ml/artifacts/*.pkl
+!ml/artifacts/.gitkeep
+!ml/artifacts/README.md
+
+ml/reports/latest/*.json
+
+# Logs and environment
+*.log
+.env
+.venv/
+venv/
+ENV/

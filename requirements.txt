@@ -1,7 +1,20 @@
+# Core Framework & Server
 fastapi
 uvicorn[standard]
 pyyaml
-pyserial        # only needed for source: serial (ESP32 over USB)
+pydantic
+
+# Machine Learning & Data Processing
+numpy
+pandas
+scikit-learn
+joblib
+
+# Testing & Quality Assurance
 pytest
-httpx           # for tests
-# scikit-learn, pandas, numpy, joblib   <- install when the ML model is plugged in
+httpx
+
+# Optional Hardware Dependencies (Install on Raspberry Pi OS only):
+# spidev        # MCP3008 SPI ADC communication
+# RPi.GPIO      # Fan relay and wall switch GPIO control
+# pyserial      # Only required if using 'source: serial' (ESP32 USB bridge)

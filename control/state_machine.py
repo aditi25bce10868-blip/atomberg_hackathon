@@ -1,12 +1,15 @@
 """Rule-based control: baseline -> trigger -> debounce -> RUNNING -> RUN-ON -> IDLE.
 Time comes from the row timestamp, so it works with fake/replay/live alike."""
-from common.schema import CRITICAL
+import math
+from common.schema import CRITICAL, InferenceStatus
 
 class Controller:
     def __init__(self, cfg):
         self.cfg, self.T, self.thr = cfg, cfg["timers"], cfg["thresholds"]
-        self.clear_ratio, self.mlc = cfg["clear_ratio"], cfg["ml"]
+        self.clear_ratio, self.mlc = cfg["clear_ratio"], cfg.get("ml", {})
         self.alpha, self.alpha_fast = cfg["baseline"]["alpha"], cfg["baseline"]["alpha_fast"]
+        # Critical sensors to monitor for faults: explicit config or auto-detected on first packet
+        self.critical = tuple(cfg["critical_sensors"]) if "critical_sensors" in cfg else None
         self.base, self.state, self.fan = {}, "WARMUP", False
         self.t0 = self.last_ts = None
         self.streak = self.clear_streak = self.fault_ok = self.frozen_for = 0.0
@@ -16,12 +19,12 @@ class Controller:
     # --- helpers -------------------------------------------------------
     def deltas(self, sensors):
         return {k: (sensors[k] - self.base[k]) if sensors.get(k) is not None and k in self.base else 0.0
-                for k in self.thr}
+                for k in self.thr if k in sensors}
 
     def _update_base(self, sensors, alpha):
-        for k in CRITICAL:
+        for k in self.thr:
             x = sensors.get(k)
-            if x is None:
+            if x is None or k == "pir":
                 continue
             self.base[k] = x if k not in self.base else self.base[k] + alpha * (x - self.base[k])
 
@@ -49,21 +52,55 @@ class Controller:
                            "cap_left": max(0.0, self.T["cap_s"] - (ts - self.start)) if self._auto() else None}}
 
     # --- one tick --------------------------------------------------------
-    def step(self, ts, sensors, health, override, ml_label=None, ml_conf=0.0):
+    def step(self, ts, sensors, health, override, ml_label=None, ml_conf=0.0, ml_status=None):
         ev, run = [], None
         dt = 1.0 if self.last_ts is None else max(0.0, ts - self.last_ts)
         self.last_ts = ts
         if self.t0 is None:
             self.t0 = ts
-        faults = [k for k in CRITICAL if health.get(k, "ok") != "ok" or sensors.get(k) is None]
+        if self.critical is None:
+            if "mq3" in sensors and "mq4" in sensors:
+                self.critical = ("mq3", "mq4", "mq135")
+            elif "mq2" in sensors:
+                self.critical = ("mq135", "mq2")
+            else:
+                self.critical = tuple(k for k in self.thr if k in sensors and k != "pir")
+
+        faults = [
+            k for k in self.critical
+            if health.get(k, "ok") != "ok"
+            or sensors.get(k) is None
+            or not isinstance(sensors.get(k), (int, float))
+            or math.isnan(sensors[k])
+            or math.isinf(sensors[k])
+        ]
         d = self.deltas(sensors)
         scale = 1.0
-        if ml_label not in (None, "clean") and (ml_conf or 0) >= self.mlc["min_confidence"]:
-            scale *= self.mlc["threshold_scale"]
+
+        # SAFETY GATE:
+        # A placeholder or unverified model must NOT independently authorize fan actuation
+        # or lower trigger thresholds. Only genuine VALID_MODEL predictions with verified
+        # confidence scale the thresholds unless allow_rules_fallback_trigger is explicitly True.
+        # Note: ml_status is None is strictly prohibited from triggering threshold scaling.
+        allow_fallback_trigger = bool(self.mlc.get("allow_rules_fallback_trigger", False))
+        is_valid_model = (ml_status == InferenceStatus.VALID_MODEL)
+        is_allowed_fallback = (ml_status == InferenceStatus.RULES_FALLBACK and allow_fallback_trigger)
+        can_scale_thresholds = is_valid_model or is_allowed_fallback
+
+        valid_contaminant_labels = ("steam", "cooking", "foul")
+        is_valid_confidence = (
+            isinstance(ml_conf, (int, float))
+            and not (math.isnan(ml_conf) or math.isinf(ml_conf))
+            and ml_conf >= self.mlc.get("min_confidence", 0.7)
+        )
+
+        if can_scale_thresholds and ml_label in valid_contaminant_labels and is_valid_confidence:
+            scale *= self.mlc.get("threshold_scale", 0.7)
+
         if sensors.get("pir"):
-            scale *= self.cfg["pir_scale"]
-        trig = any(d[k] >= self.thr[k] * scale for k in self.thr)
-        clearing = all(d[k] < self.thr[k] * self.clear_ratio for k in self.thr)
+            scale *= self.cfg.get("pir_scale", 1.0)
+        trig = any(d[k] >= self.thr[k] * scale for k in d) if d else False
+        clearing = all(d[k] < self.thr[k] * self.clear_ratio for k in d) if d else True
 
         # 1) faults beat everything: automation off, wall switch keeps working
         if faults:
@@ -107,7 +144,8 @@ class Controller:
                 self.frozen_for += dt
             if ts >= self.cooldown_until and trig:
                 if self.streak == 0:
-                    self.first_trig, self.trig_label = ts, ml_label
+                    self.first_trig = ts
+                    self.trig_label = ml_label if (is_valid_model and ml_label in valid_contaminant_labels) else "rules"
                 self.streak += 1
                 if self.streak >= self.T["debounce"]:
                     self.state, self.fan, self.start = "RUNNING", True, ts
